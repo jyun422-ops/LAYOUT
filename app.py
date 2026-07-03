@@ -98,7 +98,8 @@ if uploaded_file is not None:
                 util = (part_area / (p_val * w_val)) * 100
                 cost = (((p_val * w_val * material_thickness) * material_density) / 1000000) * material_price
                 
-                single_results.append({'각도': f"{angle}°", '피치(mm)': round(p_val,1), '소재폭(mm)': round(w_val,1), '이용률(%)': round(util,2), '1개당 원가(원)': int(cost)})
+                # 소수점 2자리 변경 및 컬럼명 '소재이용율(%)'로 변경
+                single_results.append({'각도': f"{angle}°", '피치(mm)': round(p_val,2), '소재폭(mm)': round(w_val,2), '소재이용율(%)': round(util,2), '1개당 원가(원)': int(cost)})
                 if util > best_s_util: best_s_util, best_s_cost, best_s_angle, best_s_part, best_s_w, best_s_p = util, cost, angle, rot, w_val, p_val
 
             # --- 교차 배열 시뮬레이션 ---
@@ -115,43 +116,44 @@ if uploaded_file is not None:
                     util = (pair_area / (p_val * w_val)) * 100
                     cost = ((((p_val * w_val * material_thickness) * material_density) / 1000000) * material_price) / 2
                     
-                    inter_results.append({'각도': f"{angle}°", '피치(mm)': round(p_val,1), '소재폭(mm)': round(w_val,1), '이용률(%)': round(util,2), '1개당 원가(원)': int(cost)})
+                    # 소수점 2자리 변경 및 컬럼명 '소재이용율(%)'로 변경
+                    inter_results.append({'각도': f"{angle}°", '피치(mm)': round(p_val,2), '소재폭(mm)': round(w_val,2), '소재이용율(%)': round(util,2), '1개당 원가(원)': int(cost)})
                     if util > best_i_util: best_i_util, best_i_cost, best_i_angle, best_i_pair, best_i_w, best_i_p = util, cost, angle, rot, w_val, p_val
 
             # --- [3] 결과 출력 (하이라이트 적용) ---
             st.success(f"✅ 분석 완료! 180도 교차 배열 적용 시 단일 배열 대비 제품 1개당 :blue[**{int(best_s_cost - best_i_cost):,}원**]을 절감할 수 있습니다.")
             
+            # 소수점 2자리를 항상 유지하여 보여주기 위한 포맷팅 딕셔너리
+            format_dict = {'피치(mm)': '{:.2f}', '소재폭(mm)': '{:.2f}', '소재이용율(%)': '{:.2f}'}
+            
             col1, col2 = st.columns(2)
             
             with col1:
                 st.subheader(f"[1] 단일 배열 (최적 각도: {best_s_angle}°)")
-                # 텍스트 파란색+굵은 글씨체 강조 적용
-                st.info(f"최고 소재 이용률: :blue[**{best_s_util:.1f}%**] | 1개당 단가: :blue[**{int(best_s_cost):,}원**]")
+                st.info(f"최고 소재이용율: :blue[**{best_s_util:.2f}%**] | 1개당 단가: :blue[**{int(best_s_cost):,}원**]")
                 
                 fig1, ax1 = plt.subplots(figsize=(6, 6))
                 ax1.plot(*best_s_part.exterior.xy, color='#004b87', linewidth=2)
                 ax1.fill(*best_s_part.exterior.xy, alpha=0.5, color='#004b87', label='Single Part')
                 minx, miny, maxx, maxy = best_s_part.bounds
-                ax1.plot([minx, maxx, maxx, minx, minx], [miny, miny, maxy, maxy, miny], color='red', linestyle='--', linewidth=2.5, label=f'Strip Boundary\n(W: {best_s_w:.1f}, P: {best_s_p:.1f})')
+                ax1.plot([minx, maxx, maxx, minx, minx], [miny, miny, maxy, maxy, miny], color='red', linestyle='--', linewidth=2.5, label=f'Strip Boundary\n(W: {best_s_w:.2f}, P: {best_s_p:.2f})')
                 ax1.axis('equal'); ax1.set_xticks([]); ax1.set_yticks([]); ax1.legend(loc='upper right')
                 st.pyplot(fig1)
                 
-                # 표(DataFrame) 하이라이트 스타일 적용 함수
                 df_single = pd.DataFrame(single_results)
-                max_s_util = df_single['이용률(%)'].max()
+                max_s_util = df_single['소재이용율(%)'].max()
                 
                 def highlight_best_s(row):
-                    if row['이용률(%)'] == max_s_util:
+                    if row['소재이용율(%)'] == max_s_util:
                         return ['color: blue; font-weight: bold; background-color: #e6f2ff;'] * len(row)
                     return [''] * len(row)
                 
-                # 스타일이 적용된 표를 출력
-                st.dataframe(df_single.style.apply(highlight_best_s, axis=1), use_container_width=True)
+                # 표 데이터에 소수점 2자리 포맷팅 및 하이라이트 동시 적용
+                st.dataframe(df_single.style.apply(highlight_best_s, axis=1).format(format_dict), use_container_width=True)
 
             with col2:
                 st.subheader(f"[2] 180도 교차 배열 (최적 각도: {best_i_angle}°)")
-                # 텍스트 파란색+굵은 글씨체 강조 적용
-                st.info(f"최고 소재 이용률: :blue[**{best_i_util:.1f}%**] | 1개당 단가: :blue[**{int(best_i_cost):,}원**]")
+                st.info(f"최고 소재이용율: :blue[**{best_i_util:.2f}%**] | 1개당 단가: :blue[**{int(best_i_cost):,}원**]")
                 
                 fig2, ax2 = plt.subplots(figsize=(6, 6))
                 rot_a = rotate(part_a, best_i_angle, origin=pair_geom.centroid)
@@ -161,18 +163,17 @@ if uploaded_file is not None:
                 ax2.plot(*rot_b.exterior.xy, color='#007934', linewidth=2)
                 ax2.fill(*rot_b.exterior.xy, alpha=0.5, color='#007934', label='Part B (180°)')
                 minx, miny, maxx, maxy = best_i_pair.bounds
-                ax2.plot([minx, maxx, maxx, minx, minx], [miny, miny, maxy, maxy, miny], color='red', linestyle='--', linewidth=2.5, label=f'Strip Boundary\n(W: {best_i_w:.1f}, P: {best_i_p:.1f})')
+                ax2.plot([minx, maxx, maxx, minx, minx], [miny, miny, maxy, maxy, miny], color='red', linestyle='--', linewidth=2.5, label=f'Strip Boundary\n(W: {best_i_w:.2f}, P: {best_i_p:.2f})')
                 ax2.axis('equal'); ax2.set_xticks([]); ax2.set_yticks([]); ax2.legend(loc='upper right')
                 st.pyplot(fig2)
                 
-                # 표(DataFrame) 하이라이트 스타일 적용 함수
                 df_inter = pd.DataFrame(inter_results)
-                max_i_util = df_inter['이용률(%)'].max()
+                max_i_util = df_inter['소재이용율(%)'].max()
                 
                 def highlight_best_i(row):
-                    if row['이용률(%)'] == max_i_util:
+                    if row['소재이용율(%)'] == max_i_util:
                         return ['color: blue; font-weight: bold; background-color: #e6f2ff;'] * len(row)
                     return [''] * len(row)
                 
-                # 스타일이 적용된 표를 출력
-                st.dataframe(df_inter.style.apply(highlight_best_i, axis=1), use_container_width=True)
+                # 표 데이터에 소수점 2자리 포맷팅 및 하이라이트 동시 적용
+                st.dataframe(df_inter.style.apply(highlight_best_i, axis=1).format(format_dict), use_container_width=True)
