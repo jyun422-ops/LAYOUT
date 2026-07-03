@@ -86,6 +86,7 @@ if uploaded_file is not None:
             part_area = part.area
             pair_area = part_area * 2 
             
+            # --- 단일 배열 시뮬레이션 ---
             single_results = []
             best_s_util, best_s_cost, best_s_angle, best_s_part = 0, 0, 0, None
             best_s_w, best_s_p = 0, 0
@@ -100,6 +101,7 @@ if uploaded_file is not None:
                 single_results.append({'각도': f"{angle}°", '피치(mm)': round(p_val,1), '소재폭(mm)': round(w_val,1), '이용률(%)': round(util,2), '1개당 원가(원)': int(cost)})
                 if util > best_s_util: best_s_util, best_s_cost, best_s_angle, best_s_part, best_s_w, best_s_p = util, cost, angle, rot, w_val, p_val
 
+            # --- 교차 배열 시뮬레이션 ---
             part_a, part_b, pair_geom = find_best_interlock(part, bridge)
             inter_results = []
             best_i_util, best_i_cost, best_i_angle, best_i_pair = 0, 0, 0, None
@@ -116,60 +118,61 @@ if uploaded_file is not None:
                     inter_results.append({'각도': f"{angle}°", '피치(mm)': round(p_val,1), '소재폭(mm)': round(w_val,1), '이용률(%)': round(util,2), '1개당 원가(원)': int(cost)})
                     if util > best_i_util: best_i_util, best_i_cost, best_i_angle, best_i_pair, best_i_w, best_i_p = util, cost, angle, rot, w_val, p_val
 
-            # --- [3] 결과 출력 (축 제거 및 붉은색 박스 강조) ---
-            st.success(f"✅ 분석 완료! 180도 교차 배열 적용 시 1개당 **{int(best_s_cost - best_i_cost):,}원**을 절감할 수 있습니다.")
+            # --- [3] 결과 출력 (하이라이트 적용) ---
+            st.success(f"✅ 분석 완료! 180도 교차 배열 적용 시 단일 배열 대비 제품 1개당 :blue[**{int(best_s_cost - best_i_cost):,}원**]을 절감할 수 있습니다.")
             
             col1, col2 = st.columns(2)
             
             with col1:
                 st.subheader(f"[1] 단일 배열 (최적 각도: {best_s_angle}°)")
-                st.info(f"소재 이용률: **{best_s_util:.1f}%** | 1개당 단가: **{int(best_s_cost):,}원**")
+                # 텍스트 파란색+굵은 글씨체 강조 적용
+                st.info(f"최고 소재 이용률: :blue[**{best_s_util:.1f}%**] | 1개당 단가: :blue[**{int(best_s_cost):,}원**]")
                 
                 fig1, ax1 = plt.subplots(figsize=(6, 6))
-                # 부품 그리기
                 ax1.plot(*best_s_part.exterior.xy, color='#004b87', linewidth=2)
                 ax1.fill(*best_s_part.exterior.xy, alpha=0.5, color='#004b87', label='Single Part')
-                
-                # 붉은색 바운딩 박스(최외곽 크기) 두껍게 강조
                 minx, miny, maxx, maxy = best_s_part.bounds
-                ax1.plot([minx, maxx, maxx, minx, minx], [miny, miny, maxy, maxy, miny], 
-                         color='red', linestyle='--', linewidth=2.5, 
-                         label=f'Strip Boundary\n(W: {best_s_w:.1f}, P: {best_s_p:.1f})')
-                
-                ax1.axis('equal')
-                # X축, Y축 숫자(좌표) 및 눈금 완벽 제거
-                ax1.set_xticks([])
-                ax1.set_yticks([])
-                ax1.legend(loc='upper right')
-                
+                ax1.plot([minx, maxx, maxx, minx, minx], [miny, miny, maxy, maxy, miny], color='red', linestyle='--', linewidth=2.5, label=f'Strip Boundary\n(W: {best_s_w:.1f}, P: {best_s_p:.1f})')
+                ax1.axis('equal'); ax1.set_xticks([]); ax1.set_yticks([]); ax1.legend(loc='upper right')
                 st.pyplot(fig1)
-                st.dataframe(pd.DataFrame(single_results))
+                
+                # 표(DataFrame) 하이라이트 스타일 적용 함수
+                df_single = pd.DataFrame(single_results)
+                max_s_util = df_single['이용률(%)'].max()
+                
+                def highlight_best_s(row):
+                    if row['이용률(%)'] == max_s_util:
+                        return ['color: blue; font-weight: bold; background-color: #e6f2ff;'] * len(row)
+                    return [''] * len(row)
+                
+                # 스타일이 적용된 표를 출력
+                st.dataframe(df_single.style.apply(highlight_best_s, axis=1), use_container_width=True)
 
             with col2:
                 st.subheader(f"[2] 180도 교차 배열 (최적 각도: {best_i_angle}°)")
-                st.info(f"소재 이용률: **{best_i_util:.1f}%** | 1개당 단가: **{int(best_i_cost):,}원**")
+                # 텍스트 파란색+굵은 글씨체 강조 적용
+                st.info(f"최고 소재 이용률: :blue[**{best_i_util:.1f}%**] | 1개당 단가: :blue[**{int(best_i_cost):,}원**]")
                 
                 fig2, ax2 = plt.subplots(figsize=(6, 6))
                 rot_a = rotate(part_a, best_i_angle, origin=pair_geom.centroid)
                 rot_b = rotate(part_b, best_i_angle, origin=pair_geom.centroid)
-                
-                # 부품 2개 그리기
                 ax2.plot(*rot_a.exterior.xy, color='#004b87', linewidth=2)
                 ax2.fill(*rot_a.exterior.xy, alpha=0.5, color='#004b87', label='Part A (0°)')
                 ax2.plot(*rot_b.exterior.xy, color='#007934', linewidth=2)
                 ax2.fill(*rot_b.exterior.xy, alpha=0.5, color='#007934', label='Part B (180°)')
-                
-                # 붉은색 바운딩 박스(최외곽 크기) 두껍게 강조
                 minx, miny, maxx, maxy = best_i_pair.bounds
-                ax2.plot([minx, maxx, maxx, minx, minx], [miny, miny, maxy, maxy, miny], 
-                         color='red', linestyle='--', linewidth=2.5,
-                         label=f'Strip Boundary\n(W: {best_i_w:.1f}, P: {best_i_p:.1f})')
-                
-                ax2.axis('equal')
-                # X축, Y축 숫자(좌표) 및 눈금 완벽 제거
-                ax2.set_xticks([])
-                ax2.set_yticks([])
-                ax2.legend(loc='upper right')
-                
+                ax2.plot([minx, maxx, maxx, minx, minx], [miny, miny, maxy, maxy, miny], color='red', linestyle='--', linewidth=2.5, label=f'Strip Boundary\n(W: {best_i_w:.1f}, P: {best_i_p:.1f})')
+                ax2.axis('equal'); ax2.set_xticks([]); ax2.set_yticks([]); ax2.legend(loc='upper right')
                 st.pyplot(fig2)
-                st.dataframe(pd.DataFrame(inter_results))
+                
+                # 표(DataFrame) 하이라이트 스타일 적용 함수
+                df_inter = pd.DataFrame(inter_results)
+                max_i_util = df_inter['이용률(%)'].max()
+                
+                def highlight_best_i(row):
+                    if row['이용률(%)'] == max_i_util:
+                        return ['color: blue; font-weight: bold; background-color: #e6f2ff;'] * len(row)
+                    return [''] * len(row)
+                
+                # 스타일이 적용된 표를 출력
+                st.dataframe(df_inter.style.apply(highlight_best_i, axis=1), use_container_width=True)
