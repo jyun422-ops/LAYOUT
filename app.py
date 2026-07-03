@@ -12,6 +12,7 @@ import os
 
 # --- [1] 핵심 알고리즘 함수 ---
 def find_best_interlock(part, bridge):
+    """180도 회전 교차 배열 (Interlocked)"""
     part_b_rotated = rotate(part, 180, origin='centroid')
     buffered_a = part.buffer(bridge, resolution=4)
     minx, miny, maxx, maxy = part.bounds
@@ -42,11 +43,44 @@ def find_best_interlock(part, bridge):
         except: continue
     return best_part_a, best_part_b, best_pair_geom
 
+def find_best_zigzag(part, bridge):
+    """동일 방향 지그재그 배열 (Staggered)"""
+    part_b_same = part # 회전 없이 그대로 사용
+    buffered_a = part.buffer(bridge, resolution=4)
+    minx, miny, maxx, maxy = part.bounds
+    w, h = maxx - minx, maxy - miny
+    
+    best_pair_geom, best_part_a, best_part_b = None, part, None
+    min_box_area = float('inf')
+    
+    # 상하로 슬라이딩하며 가장 콤팩트하게 끼워지는 위치 탐색
+    for dy in np.linspace(-h*0.8, h*0.8, 30): 
+        dx, step = w * 1.5, w / 20 
+        while dx > -w:
+            test_b = translate(part_b_same, xoff=dx, yoff=dy)
+            if buffered_a.intersects(test_b): dx += step; break
+            dx -= step
+        fine_step = step / 10
+        while dx > -w:
+            test_b = translate(part_b_same, xoff=dx, yoff=dy)
+            if buffered_a.intersects(test_b): dx += fine_step; break
+            dx -= fine_step
+            
+        test_b = translate(part_b_same, xoff=dx, yoff=dy)
+        try:
+            pair = unary_union([part, test_b])
+            p_minx, p_miny, p_maxx, p_maxy = pair.bounds
+            box_area = (p_maxx - p_minx) * (p_maxy - p_miny)
+            if box_area < min_box_area:
+                min_box_area, best_pair_geom, best_part_b = box_area, pair, test_b
+        except: continue
+    return best_part_a, best_part_b, best_pair_geom
+
 
 # --- [2] 웹사이트 화면 구성 ---
 st.set_page_config(page_title="프레스 레이아웃 최적화기", layout="wide")
-st.title("⚙️ 프레스 금형 스트립 레이아웃 최적화 & 원가 산출기")
-st.markdown("도면을 업로드하면 최소 스크랩과 최저 원가를 자동으로 계산합니다.")
+st.title("⚙️ 프레스 금형 스트립 배열 종합 최적화기")
+st.markdown("도면을 업로드하면 단일, 180도 교차, 동일방향 지그재그 등 **모든 경우의 수**를 계산하여 최적 원가를 찾습니다.")
 
 st.sidebar.header("📝 설계 조건 및 단가 입력")
 material_name = st.sidebar.text_input("소재 종류", "SPCC")
@@ -59,7 +93,7 @@ margin = st.sidebar.number_input("최소 마진 (mm)", value=2.0, step=0.1)
 uploaded_file = st.file_uploader("DXF 전개도면을 이곳에 드래그 앤 드롭 하세요.", type=['dxf'])
 
 if uploaded_file is not None:
-    with st.spinner('도면을 분석하고 최적 배열을 계산 중입니다... (약 10초 소요)'):
+    with st.spinner('3가지 배열 방식의 모든 경우의 수를 분석 중입니다... (약 15초 소요)'):
         with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp:
             tmp.write(uploaded_file.getvalue())
             tmp_path = tmp.name
@@ -86,9 +120,9 @@ if uploaded_file is not None:
             part_area = part.area
             pair_area = part_area * 2 
             
-            # --- 단일 배열 시뮬레이션 ---
+            # --- [Case 1] 단일 배열 시뮬레이션 ---
             single_results = []
-            best_s_util, best_s_cost, best_s_angle, best_s_part = 0, 0, 0, None
+            best_s_util, best_s_cost, best_s_angle, best_s_part = 0, float('inf'), 0, None
             best_s_w, best_s_p = 0, 0
             
             for angle in range(0, 180, 10):
@@ -98,82 +132,116 @@ if uploaded_file is not None:
                 util = (part_area / (p_val * w_val)) * 100
                 cost = (((p_val * w_val * material_thickness) * material_density) / 1000000) * material_price
                 
-                # 소수점 2자리 변경 및 컬럼명 '소재이용율(%)'로 변경
                 single_results.append({'각도': f"{angle}°", '피치(mm)': round(p_val,2), '소재폭(mm)': round(w_val,2), '소재이용율(%)': round(util,2), '1개당 원가(원)': int(cost)})
                 if util > best_s_util: best_s_util, best_s_cost, best_s_angle, best_s_part, best_s_w, best_s_p = util, cost, angle, rot, w_val, p_val
 
-            # --- 교차 배열 시뮬레이션 ---
-            part_a, part_b, pair_geom = find_best_interlock(part, bridge)
+            # --- [Case 2] 180도 교차 배열 시뮬레이션 ---
+            part_i_a, part_i_b, pair_i_geom = find_best_interlock(part, bridge)
             inter_results = []
-            best_i_util, best_i_cost, best_i_angle, best_i_pair = 0, 0, 0, None
+            best_i_util, best_i_cost, best_i_angle, best_i_pair = 0, float('inf'), 0, None
             best_i_w, best_i_p = 0, 0
 
-            if pair_geom:
+            if pair_i_geom:
                 for angle in range(0, 180, 10):
-                    rot = rotate(pair_geom, angle, origin='center')
+                    rot = rotate(pair_i_geom, angle, origin='center')
                     minx, miny, maxx, maxy = rot.bounds
                     p_val, w_val = (maxx - minx) + bridge, (maxy - miny) + (margin * 2)
                     util = (pair_area / (p_val * w_val)) * 100
                     cost = ((((p_val * w_val * material_thickness) * material_density) / 1000000) * material_price) / 2
                     
-                    # 소수점 2자리 변경 및 컬럼명 '소재이용율(%)'로 변경
                     inter_results.append({'각도': f"{angle}°", '피치(mm)': round(p_val,2), '소재폭(mm)': round(w_val,2), '소재이용율(%)': round(util,2), '1개당 원가(원)': int(cost)})
                     if util > best_i_util: best_i_util, best_i_cost, best_i_angle, best_i_pair, best_i_w, best_i_p = util, cost, angle, rot, w_val, p_val
 
-            # --- [3] 결과 출력 (하이라이트 적용) ---
-            st.success(f"✅ 분석 완료! 180도 교차 배열 적용 시 단일 배열 대비 제품 1개당 :blue[**{int(best_s_cost - best_i_cost):,}원**]을 절감할 수 있습니다.")
+            # --- [Case 3] 동일 방향 지그재그 배열 시뮬레이션 ---
+            part_z_a, part_z_b, pair_z_geom = find_best_zigzag(part, bridge)
+            zigzag_results = []
+            best_z_util, best_z_cost, best_z_angle, best_z_pair = 0, float('inf'), 0, None
+            best_z_w, best_z_p = 0, 0
+
+            if pair_z_geom:
+                for angle in range(0, 180, 10):
+                    rot = rotate(pair_z_geom, angle, origin='center')
+                    minx, miny, maxx, maxy = rot.bounds
+                    p_val, w_val = (maxx - minx) + bridge, (maxy - miny) + (margin * 2)
+                    util = (pair_area / (p_val * w_val)) * 100
+                    cost = ((((p_val * w_val * material_thickness) * material_density) / 1000000) * material_price) / 2
+                    
+                    zigzag_results.append({'각도': f"{angle}°", '피치(mm)': round(p_val,2), '소재폭(mm)': round(w_val,2), '소재이용율(%)': round(util,2), '1개당 원가(원)': int(cost)})
+                    if util > best_z_util: best_z_util, best_z_cost, best_z_angle, best_z_pair, best_z_w, best_z_p = util, cost, angle, rot, w_val, p_val
+
+            # --- [3] 결과 출력 및 비교 ---
+            # 최적의 다열 배열 방식 판별
+            best_overall_cost = min(best_i_cost, best_z_cost)
+            best_method_name = "180도 교차 배열" if best_overall_cost == best_i_cost else "지그재그 배열"
+            saving_cost = int(best_s_cost - best_overall_cost)
+
+            st.success(f"🏆 모든 경우의 수 분석 완료! 가장 훌륭한 배열은 **[{best_method_name}]**이며, 단일 배열 대비 제품 1개당 :blue[**{saving_cost:,}원**]을 절감할 수 있습니다.")
             
-            # 소수점 2자리를 항상 유지하여 보여주기 위한 포맷팅 딕셔너리
             format_dict = {'피치(mm)': '{:.2f}', '소재폭(mm)': '{:.2f}', '소재이용율(%)': '{:.2f}'}
             
-            col1, col2 = st.columns(2)
+            # 3개의 열(Column)로 나누어 결과 표시
+            col1, col2, col3 = st.columns(3)
             
+            def highlight_best(row, max_util):
+                if row['소재이용율(%)'] == max_util:
+                    return ['color: blue; font-weight: bold; background-color: #e6f2ff;'] * len(row)
+                return [''] * len(row)
+
+            # 1. 단일 배열
             with col1:
-                st.subheader(f"[1] 단일 배열 (최적 각도: {best_s_angle}°)")
-                st.info(f"최고 소재이용율: :blue[**{best_s_util:.2f}%**] | 1개당 단가: :blue[**{int(best_s_cost):,}원**]")
+                st.subheader(f"[1] 단일 배열 ({best_s_angle}°)")
+                st.info(f"최고 이용율: :blue[**{best_s_util:.2f}%**] | 단가: :blue[**{int(best_s_cost):,}원**]")
                 
                 fig1, ax1 = plt.subplots(figsize=(6, 6))
                 ax1.plot(*best_s_part.exterior.xy, color='#004b87', linewidth=2)
                 ax1.fill(*best_s_part.exterior.xy, alpha=0.5, color='#004b87', label='Single Part')
                 minx, miny, maxx, maxy = best_s_part.bounds
-                ax1.plot([minx, maxx, maxx, minx, minx], [miny, miny, maxy, maxy, miny], color='red', linestyle='--', linewidth=2.5, label=f'Strip Boundary\n(W: {best_s_w:.2f}, P: {best_s_p:.2f})')
+                ax1.plot([minx, maxx, maxx, minx, minx], [miny, miny, maxy, maxy, miny], color='red', linestyle='--', linewidth=2.5)
                 ax1.axis('equal'); ax1.set_xticks([]); ax1.set_yticks([]); ax1.legend(loc='upper right')
                 st.pyplot(fig1)
                 
                 df_single = pd.DataFrame(single_results)
-                max_s_util = df_single['소재이용율(%)'].max()
-                
-                def highlight_best_s(row):
-                    if row['소재이용율(%)'] == max_s_util:
-                        return ['color: blue; font-weight: bold; background-color: #e6f2ff;'] * len(row)
-                    return [''] * len(row)
-                
-                # 표 데이터에 소수점 2자리 포맷팅 및 하이라이트 동시 적용
-                st.dataframe(df_single.style.apply(highlight_best_s, axis=1).format(format_dict), use_container_width=True)
+                max_s = df_single['소재이용율(%)'].max()
+                st.dataframe(df_single.style.apply(lambda r: highlight_best(r, max_s), axis=1).format(format_dict), use_container_width=True)
 
+            # 2. 180도 교차 배열
             with col2:
-                st.subheader(f"[2] 180도 교차 배열 (최적 각도: {best_i_angle}°)")
-                st.info(f"최고 소재이용율: :blue[**{best_i_util:.2f}%**] | 1개당 단가: :blue[**{int(best_i_cost):,}원**]")
+                st.subheader(f"[2] 180도 교차 배열 ({best_i_angle}°)")
+                st.info(f"최고 이용율: :blue[**{best_i_util:.2f}%**] | 단가: :blue[**{int(best_i_cost):,}원**]")
                 
                 fig2, ax2 = plt.subplots(figsize=(6, 6))
-                rot_a = rotate(part_a, best_i_angle, origin=pair_geom.centroid)
-                rot_b = rotate(part_b, best_i_angle, origin=pair_geom.centroid)
+                rot_a = rotate(part_i_a, best_i_angle, origin=pair_i_geom.centroid)
+                rot_b = rotate(part_i_b, best_i_angle, origin=pair_i_geom.centroid)
                 ax2.plot(*rot_a.exterior.xy, color='#004b87', linewidth=2)
                 ax2.fill(*rot_a.exterior.xy, alpha=0.5, color='#004b87', label='Part A (0°)')
                 ax2.plot(*rot_b.exterior.xy, color='#007934', linewidth=2)
-                ax2.fill(*rot_b.exterior.xy, alpha=0.5, color='#007934', label='Part B (180°)')
+                ax2.fill(*rot_b.exterior.xy, alpha=0.5, color='#007934', label='Part B (180°)') # 초록색
                 minx, miny, maxx, maxy = best_i_pair.bounds
-                ax2.plot([minx, maxx, maxx, minx, minx], [miny, miny, maxy, maxy, miny], color='red', linestyle='--', linewidth=2.5, label=f'Strip Boundary\n(W: {best_i_w:.2f}, P: {best_i_p:.2f})')
+                ax2.plot([minx, maxx, maxx, minx, minx], [miny, miny, maxy, maxy, miny], color='red', linestyle='--', linewidth=2.5)
                 ax2.axis('equal'); ax2.set_xticks([]); ax2.set_yticks([]); ax2.legend(loc='upper right')
                 st.pyplot(fig2)
                 
                 df_inter = pd.DataFrame(inter_results)
-                max_i_util = df_inter['소재이용율(%)'].max()
+                max_i = df_inter['소재이용율(%)'].max()
+                st.dataframe(df_inter.style.apply(lambda r: highlight_best(r, max_i), axis=1).format(format_dict), use_container_width=True)
+
+            # 3. 지그재그 배열
+            with col3:
+                st.subheader(f"[3] 지그재그 배열 ({best_z_angle}°)")
+                st.info(f"최고 이용율: :blue[**{best_z_util:.2f}%**] | 단가: :blue[**{int(best_z_cost):,}원**]")
                 
-                def highlight_best_i(row):
-                    if row['소재이용율(%)'] == max_i_util:
-                        return ['color: blue; font-weight: bold; background-color: #e6f2ff;'] * len(row)
-                    return [''] * len(row)
+                fig3, ax3 = plt.subplots(figsize=(6, 6))
+                rot_a = rotate(part_z_a, best_z_angle, origin=pair_z_geom.centroid)
+                rot_b = rotate(part_z_b, best_z_angle, origin=pair_z_geom.centroid)
+                ax3.plot(*rot_a.exterior.xy, color='#004b87', linewidth=2)
+                ax3.fill(*rot_a.exterior.xy, alpha=0.5, color='#004b87', label='Part A (0°)')
+                ax3.plot(*rot_b.exterior.xy, color='#d55e00', linewidth=2)
+                ax3.fill(*rot_b.exterior.xy, alpha=0.5, color='#d55e00', label='Part B (0°, Offset)') # 오렌지색
+                minx, miny, maxx, maxy = best_z_pair.bounds
+                ax3.plot([minx, maxx, maxx, minx, minx], [miny, miny, maxy, maxy, miny], color='red', linestyle='--', linewidth=2.5)
+                ax3.axis('equal'); ax3.set_xticks([]); ax3.set_yticks([]); ax3.legend(loc='upper right')
+                st.pyplot(fig3)
                 
-                # 표 데이터에 소수점 2자리 포맷팅 및 하이라이트 동시 적용
-                st.dataframe(df_inter.style.apply(highlight_best_i, axis=1).format(format_dict), use_container_width=True)
+                df_zigzag = pd.DataFrame(zigzag_results)
+                max_z = df_zigzag['소재이용율(%)'].max()
+                st.dataframe(df_zigzag.style.apply(lambda r: highlight_best(r, max_z), axis=1).format(format_dict), use_container_width=True)
